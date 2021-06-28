@@ -14,29 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.huaweicloud.sample;
 
-import java.util.List;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-
-@RestController
-public class PriceController {
-  @Autowired
-  private Configuration configuration;
-
-  @RequestMapping("/price")
-  public String sayHello(@RequestParam("id") String id) {
-    return id;
-  }
-
-  @RequestMapping("/configuration")
-  public String getEnums() {
-    List<EnumType> enums = configuration.getEnums();
-
-    return enums.toString() + ":" + configuration.getName();
-  }
+public enum EnumType {
+  FIRST,
+  SECOND
 }
