@@ -17,38 +17,26 @@
 
 package com.huaweicloud.servicecomb.discovery.ribbon;
 
-import com.huaweicloud.servicecomb.discovery.client.model.MicroserviceInstanceStatus;
-import com.netflix.loadbalancer.Server;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 import org.springframework.cloud.client.ServiceInstance;
-import com.huaweicloud.servicecomb.discovery.client.ServiceCombClient;
-import com.huaweicloud.servicecomb.discovery.client.model.Microservice;
-import com.huaweicloud.servicecomb.discovery.discovery.MicroserviceHandler;
-import com.huaweicloud.servicecomb.discovery.discovery.ServiceCombDiscoveryProperties;
+import org.springframework.cloud.client.discovery.DiscoveryClient;
 
+import com.huaweicloud.servicecomb.discovery.client.model.ServiceCombServer;
+import com.huaweicloud.servicecomb.discovery.client.model.ServiceCombServiceInstance;
 import com.netflix.client.config.IClientConfig;
 import com.netflix.loadbalancer.AbstractServerList;
+import com.netflix.loadbalancer.Server;
 
-/**
- * @Author wangqijun
- * @Date 09:31 2019-07-12
- **/
 public class ServiceCombServerList extends AbstractServerList<Server> {
-
-  private ServiceCombClient serviceCombClient;
-
-  private ServiceCombDiscoveryProperties serviceCombDiscoveryProperties;
-
   private String serviceId;
 
-  public ServiceCombServerList(
-      ServiceCombDiscoveryProperties serviceCombDiscoveryProperties,
-      ServiceCombClient serviceCombClient) {
-    this.serviceCombDiscoveryProperties = serviceCombDiscoveryProperties;
-    this.serviceCombClient = serviceCombClient;
+  private DiscoveryClient discoveryClient;
+
+  public ServiceCombServerList(DiscoveryClient discoveryClient) {
+    this.discoveryClient = discoveryClient;
   }
 
   @Override
@@ -63,29 +51,14 @@ public class ServiceCombServerList extends AbstractServerList<Server> {
 
   @Override
   public List<Server> getUpdatedListOfServers() {
-    Microservice microService = MicroserviceHandler
-        .createMicroservice(serviceCombDiscoveryProperties, serviceId);
-    //spring cloud serviceId equals servicecomb serviceName
-    List<ServiceInstance> instanceList = MicroserviceHandler
-        .getInstances(microService, serviceCombClient);
-    return transform(instanceList);
+    List<ServiceInstance> instances = discoveryClient.getInstances(this.serviceId);
+    return transform(instances);
   }
 
   private List<Server> transform(List<ServiceInstance> instanceList) {
     List<Server> serverList = new ArrayList<>();
     instanceList.forEach(
-        instance -> {
-          if (instance
-              .getMetadata()
-              .get(ServiceCombClient.INSTANCE_STATUS)
-              .equals(MicroserviceInstanceStatus.UP.name())) {
-            Server server = new Server(instance.getHost(), instance.getPort());
-            if (instance.getMetadata().containsKey(ServiceCombClient.ZONE)) {
-              server.setZone(instance.getMetadata().get(ServiceCombClient.ZONE));
-            }
-            serverList.add(server);
-          }
-        });
+        instance -> serverList.add(new ServiceCombServer((ServiceCombServiceInstance) instance)));
     return serverList;
   }
 }

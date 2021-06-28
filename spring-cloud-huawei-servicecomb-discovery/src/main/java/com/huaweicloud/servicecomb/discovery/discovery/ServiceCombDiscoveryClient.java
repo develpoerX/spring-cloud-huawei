@@ -18,60 +18,132 @@
 package com.huaweicloud.servicecomb.discovery.discovery;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
+import org.apache.servicecomb.service.center.client.DiscoveryEvents.InstanceChangedEvent;
+import org.apache.servicecomb.service.center.client.RegistrationEvents.HeartBeatEvent;
+import org.apache.servicecomb.service.center.client.RegistrationEvents.MicroserviceInstanceRegistrationEvent;
+import org.apache.servicecomb.service.center.client.ServiceCenterClient;
+import org.apache.servicecomb.service.center.client.ServiceCenterDiscovery;
+import org.apache.servicecomb.service.center.client.ServiceCenterDiscovery.SubscriptionKey;
+import org.apache.servicecomb.service.center.client.exception.OperationException;
+import org.apache.servicecomb.service.center.client.model.Microservice;
+import org.apache.servicecomb.service.center.client.model.MicroserviceInstance;
+import org.apache.servicecomb.service.center.client.model.MicroservicesResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
-import com.huaweicloud.common.exception.ServiceCombException;
-import com.huaweicloud.servicecomb.discovery.client.ServiceCombClient;
-import com.huaweicloud.servicecomb.discovery.client.model.Microservice;
-import com.huaweicloud.servicecomb.discovery.client.model.MicroserviceResponse;
+import org.springframework.cloud.client.discovery.event.HeartbeatEvent;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.ApplicationEventPublisherAware;
 
-public class ServiceCombDiscoveryClient implements DiscoveryClient {
+import com.google.common.eventbus.Subscribe;
+import com.huaweicloud.common.event.EventManager;
+import com.huaweicloud.servicecomb.discovery.client.model.DiscoveryConstants;
+import com.huaweicloud.servicecomb.discovery.client.model.ServiceCombServiceInstance;
+import com.huaweicloud.servicecomb.discovery.registry.ServiceCombRegistration;
 
+public class ServiceCombDiscoveryClient implements DiscoveryClient, ApplicationEventPublisherAware {
   private static final Logger LOGGER = LoggerFactory.getLogger(ServiceCombDiscoveryClient.class);
 
-  private ServiceCombClient serviceCombClient;
+  private ServiceCenterClient serviceCenterClient;
 
   private ServiceCombDiscoveryProperties discoveryProperties;
 
+  private ServiceCenterDiscovery serviceCenterDiscovery;
+
+  private ServiceCombRegistration serviceCombRegistration;
+
+  private ApplicationEventPublisher applicationEventPublisher;
+
+  private final AtomicLong changeId = new AtomicLong(0);
+
   public ServiceCombDiscoveryClient(ServiceCombDiscoveryProperties discoveryProperties,
-      ServiceCombClient serviceCombClient) {
+      ServiceCenterClient serviceCenterClient, ServiceCombRegistration serviceCombRegistration) {
     this.discoveryProperties = discoveryProperties;
-    this.serviceCombClient = serviceCombClient;
+    this.serviceCenterClient = serviceCenterClient;
+    this.serviceCombRegistration = serviceCombRegistration;
+
+    serviceCenterDiscovery = new ServiceCenterDiscovery(serviceCenterClient,
+        EventManager.getEventBus());
+    EventManager.getEventBus().register(this);
+  }
+
+  @Subscribe
+  public void onHeartBeatEvent(HeartBeatEvent event) {
+    if (event.isSuccess()) {
+      serviceCenterDiscovery.updateMyselfServiceId(serviceCombRegistration.getMicroservice().getServiceId());
+      // startDiscovery will check if already started, can call several times
+      serviceCenterDiscovery.startDiscovery();
+    }
+  }
+
+  // 适配 Spring Cloud HeartbeatEvent 事件。 当实例发生变更的时候，通过 HeartbeatEvent 通知
+  // DiscoveryClient 拉取实例。
+  @Subscribe
+  public void onInstanceChangedEvent(InstanceChangedEvent event) {
+    this.applicationEventPublisher.publishEvent(new HeartbeatEvent(this, changeId.getAndIncrement()));
   }
 
   @Override
   public String description() {
-    return "this is servicecomb implement";
+    return "SerivceComb Discovery";
   }
 
   @Override
   public List<ServiceInstance> getInstances(String serviceId) {
-    Microservice microService = MicroserviceHandler
-        .createMicroservice(discoveryProperties, serviceId);
-    //spring cloud serviceId equals servicecomb serviceName
-    return MicroserviceHandler.getInstances(microService, serviceCombClient);
+    SubscriptionKey subscriptionKey = new SubscriptionKey(discoveryProperties.getAppName(), serviceId);
+    if (!serviceCenterDiscovery.isRegistered(subscriptionKey)) {
+      serviceCenterDiscovery.register(subscriptionKey);
+    }
+    List<MicroserviceInstance> instances = serviceCenterDiscovery.getInstanceCache(subscriptionKey);
+
+    if (instances == null) {
+      return Collections.emptyList();
+    }
+
+    return instances.stream().map(item -> new ServiceCombServiceInstance(item)).collect(Collectors.toList());
   }
 
   @Override
   public List<String> getServices() {
     List<String> serviceList = new ArrayList<>();
     try {
-      MicroserviceResponse microServiceResponse = serviceCombClient
-          .getServices();
+      MicroservicesResponse microServiceResponse = serviceCenterClient.getMicroserviceList();
       if (microServiceResponse == null || microServiceResponse.getServices() == null) {
         return serviceList;
       }
       for (Microservice microservice : microServiceResponse.getServices()) {
-        serviceList.add(microservice.getServiceName());
+        if (isAllowedMicroservice(microservice)) {
+          serviceList.add(microservice.getServiceName());
+        }
       }
       return serviceList;
-    } catch (ServiceCombException e) {
+    } catch (OperationException e) {
       LOGGER.error("getServices failed", e);
     }
     return serviceList;
+  }
+
+  private boolean isAllowedMicroservice(Microservice microservice) {
+    if (microservice.getAppId().equals(DiscoveryConstants.DEFAULT_APPID) && microservice.getServiceName()
+        .equals(DiscoveryConstants.SERVICE_CENTER)) {
+      return false;
+    }
+
+    if (microservice.getAppId().equals(discoveryProperties.getAppName()) ||
+        Boolean.parseBoolean(microservice.getProperties().get(DiscoveryConstants.CONFIG_ALLOW_CROSS_APP_KEY))) {
+      return true;
+    }
+    return false;
+  }
+
+  @Override
+  public void setApplicationEventPublisher(ApplicationEventPublisher applicationEventPublisher) {
+    this.applicationEventPublisher = applicationEventPublisher;
   }
 }

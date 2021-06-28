@@ -53,6 +53,7 @@ import com.huaweicloud.common.transport.ServiceCombSSLProperties;
  * @Date 2019/12/10
  **/
 public class SecretUtil {
+  public static final String HMAC_SHA_256 = "HmacSHA256";
 
   private static final Logger LOGGER = LoggerFactory.getLogger(SecretUtil.class);
 
@@ -114,9 +115,9 @@ public class SecretUtil {
 
   public static String sha256Encode(String key, String data) {
     try {
-      Mac sha256HMAC = Mac.getInstance("HmacSHA256");
+      Mac sha256HMAC = Mac.getInstance(HMAC_SHA_256);
       SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8),
-          "HmacSHA256");
+          HMAC_SHA_256);
       sha256HMAC.init(secretKey);
       return Hex.encodeHexString(sha256HMAC.doFinal(data.getBytes(StandardCharsets.UTF_8)));
     } catch (Exception e) {
